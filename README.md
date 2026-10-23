@@ -1,10 +1,36 @@
 # Kit DevSecOps para proyectos académicos
 
-Este repositorio ayuda a reducir errores con credenciales en proyectos académicos
-que usan GitHub y, opcionalmente, Azure. La versión 0.7.4 genera escaneo local y
-en GitHub Actions, un perfil Bicep y un ejemplo mínimo de aplicación Python
-Functions. PyroPrev fue el caso de estudio: **el proyecto generado no es su API
-ni una aplicación ya publicada en Azure**.
+[![Secret scanning](../../actions/workflows/secret-scan.yml/badge.svg)](../../actions/workflows/secret-scan.yml)
+[![Tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+Kit para que un equipo parta un proyecto de Python con Azure Functions sin
+credenciales en Git. Genera un proyecto con escaneo de secretos local
+(pre-commit y Gitleaks) y en GitHub Actions, un perfil Bicep para Azure Functions
+Flex Consumption, configuración cifrada opcional con SOPS y age, y un ejemplo
+HTTP `/api/health` con pruebas. La versión actual es la 0.7.4.
+
+Nació de mi Trabajo de Título sobre prevención de fugas de credenciales en
+proyectos académicos con GitHub y Azure. El caso de estudio fue PyroPrev, un
+proyecto de otro equipo; el kit genera un esqueleto nuevo y **no incluye su
+código ni es una aplicación ya publicada en Azure**. Los nombres `feria-*` y
+`.feria/` vienen del contexto original (la Feria de Software de la universidad)
+y se mantienen por compatibilidad.
+
+Así se ve la generación en local, sin Azure ni claves:
+
+```text
+$ python -m framework.starter_kit doctor --mode local
+Mode: local
+- python: ok (required)
+- git: ok (required)
+Ready
+
+$ python -m framework.starter_kit generate --config project.json --output proyecto
+Generated 32 files in proyecto
+SOPS configuration omitted because no public recipients were supplied.
+No remote resources were changed.
+```
 
 Hay dos recorridos distintos:
 
@@ -128,6 +154,29 @@ Si `doctor` dice «Ready» pero `plan` falla, comprueba `az bicep version`:
 `doctor --mode local` no exige Azure CLI/Bicep. Si `init` indica fecha pendiente,
 usa un `expires_on` futuro. Si otro archivo ya existe y difiere, el generador
 se detiene sin sobrescribirlo.
+
+## Decisiones técnicas
+
+El perfil de Azure es deliberadamente pequeño: Functions Flex Consumption con
+Python 3.12, 512 MB, una instancia máxima y sin instancias siempre activas, para
+que quepa en créditos estudiantiles, sin depender de Pay-As-You-Go, y se pueda
+crear y destruir de forma reproducible. Dejé la base de datos fuera
+(`database_profile=none`) porque la consulta de SKUs de MySQL falló en tres
+regiones y no aportaba a lo que había que demostrar, que eran los controles de
+credenciales; el trade-off es que el ejemplo no cubre una aplicación con
+persistencia.
+
+La autenticación entre GitHub y Azure usa OIDC, sin un secreto permanente en el
+repositorio, y los workflows que tocan Azure son demos de ejecución manual,
+inactivas hasta que el equipo las adapta. Para la configuración sensible elegí
+SOPS con destinatarios `age` individuales: es gratuito y portable, pero deja la
+custodia de las claves en cada persona, así que la clave de CI tiene alcance
+propio y los respaldos se documentan en la [guía SOPS](docs/SOPS.md).
+
+En CI, las acciones y los binarios descargados van fijados por commit y SHA-256
+(ver [modelo de amenazas](docs/THREAT_MODEL.md)), y el generador se niega a
+sobrescribir archivos que el equipo ya modificó. Cada decisión con su contexto y
+su criterio de reversión está en [`docs/adr/`](docs/adr).
 
 ## Investigación y evidencia
 

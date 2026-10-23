@@ -91,10 +91,8 @@ python -m framework.starter_kit generate `
   --output (Join-Path $handoffOutput 'generated')
 ```
 
-El kit genera 23 archivos sin destinatarios SOPS (omite `.sops.yaml` y declara que
-no realizó cambios remotos) y 24 con al menos un destinatario público válido.
-El manifiesto es un archivo adicional. Repetir `generate` debe conservar el mismo
-manifiesto.
+Sin destinatarios SOPS, el kit 0.7.4 genera 32 archivos, omite `.sops.yaml` y declara que
+no realizó cambios remotos. Repetir `generate` debe conservar el mismo manifiesto.
 
 ## 5. Antes de usar Azure
 

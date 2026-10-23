@@ -178,7 +178,7 @@ class StarterKitTests(unittest.TestCase):
             origin = subprocess.run(
                 command + ["-c", (
                     "from pathlib import Path; import framework.starter_kit.cli as c; "
-                    "assert Path(c.__file__).resolve().is_relative_to(Path.cwd()); "
+                    "assert Path(c.__file__).resolve().is_relative_to(Path.cwd().resolve()); "
                     "print('generated-runtime-origin-confirmed')"
                 )],
                 cwd=output, capture_output=True, text=True, check=False,
@@ -206,7 +206,7 @@ class StarterKitTests(unittest.TestCase):
             completed = subprocess.run(
                 [sys.executable, "-E", "-S", "-B", "-c", (
                     "import sys; from pathlib import Path; "
-                    "root = Path(sys.argv.pop(1)); sys.path.insert(0, str(root)); "
+                    "root = Path(sys.argv.pop(1)).resolve(); sys.path.insert(0, str(root)); "
                     "import framework.starter_kit.cli as c; "
                     "assert Path(c.__file__).resolve().is_relative_to(root); "
                     "raise SystemExit(c.main(sys.argv[1:]))"
