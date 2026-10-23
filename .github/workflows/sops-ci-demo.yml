@@ -1,0 +1,82 @@
+name: SOPS CI demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  decrypt:
+    name: Decrypt synthetic SOPS fixture
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: sops-demo
+    env:
+      SOPS_VERSION: 3.13.3
+      SOPS_SHA256: e5bec3346a873ae91d871550f3e698c1aad962aff462a080e40f25fde17fef6b
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install pinned SOPS binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary="$RUNNER_TEMP/sops"
+          url="https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          curl --fail --location --silent --show-error --retry 3 "$url" --output "$binary"
+          echo "${SOPS_SHA256}  ${binary}" | sha256sum --check --status
+          chmod +x "$binary"
+          "$binary" --version
+
+      - name: Materialize isolated CI key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$SOPS_AGE_KEY" ]]; then
+            echo "The protected SOPS CI key is not configured." >&2
+            exit 2
+          fi
+          marker='AGE-''SECRET-KEY-1'
+          if ! grep --quiet "^${marker}" <<< "$SOPS_AGE_KEY"; then
+            echo "The protected SOPS CI key has an unexpected format." >&2
+            exit 2
+          fi
+          umask 077
+          printf '%s\n' "$SOPS_AGE_KEY" > "$RUNNER_TEMP/sops-age-key.txt"
+
+      - name: Decrypt and verify without exposing values
+        env:
+          SOPS_AGE_KEY_FILE: ${{ runner.temp }}/sops-age-key.txt
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$RUNNER_TEMP/sops" decrypt \
+            --output "$RUNNER_TEMP/sops-decrypted.json" \
+            examples/sops/secrets.enc.json
+          python scripts/verify_sops_ci_demo.py \
+            --encrypted examples/sops/secrets.enc.json \
+            --decrypted "$RUNNER_TEMP/sops-decrypted.json" \
+            --expected-digest-file examples/sops/expected-semantic-sha256.txt \
+            --metrics "$RUNNER_TEMP/sops-ci-metrics.json"
+
+      - name: Publish sanitized metrics
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sops-ci-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/sops-ci-metrics.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clean up plaintext and private key
+        if: always()
+        shell: bash
+        run: |
+          rm -f -- "$RUNNER_TEMP/sops-decrypted.json" \
+            "$RUNNER_TEMP/sops-age-key.txt"

@@ -1,0 +1,6 @@
+# Public recipients only. Private age keys must never enter Git or logs.
+creation_rules:
+  - path_regex: '(^|.*[\\/])secrets\.enc\.(yaml|yml|json)$'
+    age: >-
+      age13auuweyqnm4ag5lq3zpcu7ualzs7vemtm0wy09ezpcht9apvmczq5qzymw,
+      age1vtk2z0gg9wxq2jxwkslxknu907ec2pchj7elwerwelnne9agravqprngzq

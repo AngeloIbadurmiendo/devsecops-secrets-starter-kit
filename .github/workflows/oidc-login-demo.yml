@@ -1,0 +1,87 @@
+name: Azure OIDC login demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  login:
+    name: Authenticate without a client secret
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: azure-demo
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Exchange GitHub OIDC token for an Azure token
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Verify the scoped identity without exposing identifiers
+        env:
+          EXPECTED_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          EXPECTED_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          TARGET_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          METRICS_PATH: ${{ runner.temp }}/oidc-login-metrics.json
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$EXPECTED_SUBSCRIPTION_ID" || -z "$EXPECTED_TENANT_ID" || -z "$TARGET_RESOURCE_GROUP" ]]; then
+            echo "Required protected OIDC configuration is missing." >&2
+            exit 2
+          fi
+
+          actual_subscription_id="$(az account show --query id --output tsv --only-show-errors)"
+          actual_tenant_id="$(az account show --query tenantId --output tsv --only-show-errors)"
+          principal_type="$(az account show --query user.type --output tsv --only-show-errors)"
+
+          [[ "$actual_subscription_id" == "$EXPECTED_SUBSCRIPTION_ID" ]]
+          [[ "$actual_tenant_id" == "$EXPECTED_TENANT_ID" ]]
+          [[ "$principal_type" == "servicePrincipal" ]]
+          az group show \
+            --name "$TARGET_RESOURCE_GROUP" \
+            --query name \
+            --output none \
+            --only-show-errors
+
+          jq --null-input \
+            --arg generated_at_utc "$(date --utc +%Y-%m-%dT%H:%M:%SZ)" \
+            '{
+              schema_version: 1,
+              generated_at_utc: $generated_at_utc,
+              authentication: "github_oidc",
+              principal_type: "servicePrincipal",
+              target_scope_visible: true,
+              client_secret_used: false,
+              identifiers_retained: false
+            }' > "$METRICS_PATH"
+
+          {
+            echo "### Azure OIDC login"
+            echo
+            echo "- Authentication: GitHub OIDC"
+            echo "- Principal type: servicePrincipal"
+            echo "- Target scope visible: true"
+            echo "- Client secret used: false"
+            echo "- Azure identifiers retained: false"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish sanitized OIDC metrics
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: oidc-login-metrics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/oidc-login-metrics.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clear the Azure CLI session
+        if: always()
+        shell: bash
+        run: az logout >/dev/null 2>&1 || true

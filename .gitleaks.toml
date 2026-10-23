@@ -1,0 +1,8 @@
+title = "Framework DevSecOps académico"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Generated feria-starter manifest contains SHA-256 checksums only"
+paths = ['''(^|.*[\\/])\.feria[\\/]manifest\.json$''']

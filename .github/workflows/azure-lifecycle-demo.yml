@@ -1,0 +1,96 @@
+name: Azure lifecycle apply and verify demo
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  apply-and-verify:
+    name: Apply and verify the bounded Azure profile
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: azure-demo
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out the protected revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Exchange GitHub OIDC token for an Azure token
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Plan, apply, and verify without retaining Azure identifiers
+        env:
+          TARGET_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+          CONFIG_PATH: ${{ runner.temp }}/feria-project.json
+          RESULTS_DIR: ${{ runner.temp }}/azure-lifecycle-results
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$TARGET_RESOURCE_GROUP" ]]; then
+            echo "Required protected resource-group configuration is missing." >&2
+            exit 2
+          fi
+
+          mkdir -p "$RESULTS_DIR"
+          python -m framework.starter_kit init \
+            --non-interactive \
+            --name devsecops-kit-demo \
+            --environment dev \
+            --expires-on 2026-09-18 \
+            --output "$CONFIG_PATH"
+          python -m framework.starter_kit plan \
+            --config "$CONFIG_PATH" \
+            --template infra/bicep/main.bicep \
+            --resource-group "$TARGET_RESOURCE_GROUP" \
+            --what-if \
+            --output "$RESULTS_DIR/plan.json"
+          python -m framework.starter_kit apply \
+            --config "$CONFIG_PATH" \
+            --template infra/bicep/main.bicep \
+            --resource-group "$TARGET_RESOURCE_GROUP" \
+            --confirm apply:devsecops-kit-demo:dev \
+            --output "$RESULTS_DIR/apply.json"
+          python -m framework.starter_kit verify \
+            --config "$CONFIG_PATH" \
+            --resource-group "$TARGET_RESOURCE_GROUP" \
+            --output "$RESULTS_DIR/verify.json"
+
+          {
+            echo "### Azure lifecycle"
+            echo
+            echo "- Authentication: GitHub OIDC"
+            echo "- Plan: succeeded"
+            echo "- Apply: succeeded"
+            echo "- Verification: succeeded"
+            echo "- Client secret used: false"
+            echo "- Azure identifiers retained: false"
+            echo "- Destruction: separate guarded operation"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publish sanitized lifecycle results
+        if: success()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: azure-lifecycle-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/azure-lifecycle-results/*.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Clear generated files and Azure CLI session
+        if: always()
+        shell: bash
+        run: |
+          rm -f "${RUNNER_TEMP}/feria-project.json"
+          rm -rf "${RUNNER_TEMP}/azure-lifecycle-results"
+          az logout >/dev/null 2>&1 || true
