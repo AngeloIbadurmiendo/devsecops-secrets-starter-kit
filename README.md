@@ -4,18 +4,47 @@
 [![Tests](../../actions/workflows/tests.yml/badge.svg)](../../actions/workflows/tests.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Kit para que un equipo parta un proyecto de Python con Azure Functions sin
-credenciales en Git. Genera un proyecto con escaneo de secretos local
-(pre-commit y Gitleaks) y en GitHub Actions, un perfil Bicep para Azure Functions
-Flex Consumption, configuración cifrada opcional con SOPS y age, y un ejemplo
-HTTP `/api/health` con pruebas. La versión actual es la 0.7.4.
+Permite a un equipo partir un proyecto de Python con Azure Functions sin
+credenciales en Git, con controles de secretos en local y en CI desde el primer
+commit. La versión actual es la 0.7.4.
 
-Nació de mi Trabajo de Título sobre prevención de fugas de credenciales en
-proyectos académicos con GitHub y Azure. El caso de estudio fue PyroPrev, un
-proyecto de otro equipo; el kit genera un esqueleto nuevo y **no incluye su
-código ni es una aplicación ya publicada en Azure**. Los nombres `feria-*` y
-`.feria/` vienen del contexto original (la Feria de Software de la universidad)
-y se mantienen por compatibilidad.
+## Qué incluye
+
+- Escaneo de secretos local con pre-commit y Gitleaks.
+- Workflow de escaneo en GitHub Actions, listo para exigirse como check obligatorio antes del merge.
+- Perfil Bicep para Azure Functions Flex Consumption (Python 3.12, `brazilsouth`).
+- Autenticación GitHub–Azure con OIDC, sin secretos permanentes en el repositorio.
+- Configuración cifrada opcional con SOPS y destinatarios `age`.
+- Acciones y binarios de CI fijados por commit y SHA-256.
+- Ejemplo HTTP `/api/health` con pruebas.
+- ADRs en [`docs/adr/`](docs/adr) y [modelo de amenazas](docs/THREAT_MODEL.md).
+
+El generador también deja su runtime dentro del proyecto y se niega a
+sobrescribir archivos que el equipo ya modificó.
+
+## Cómo fluye
+
+```mermaid
+flowchart LR
+    dev[Desarrollador] --> hook["pre-commit<br/>(Gitleaks)"]
+    hook --> push[git push]
+    push --> ci["CI<br/>(escaneo + tests)"]
+    ci -.-> oidc[OIDC]
+    oidc -.-> azure[Azure]
+```
+
+Las flechas punteadas corresponden a los workflows de Azure, que el equipo
+activa después de adaptarlos.
+
+## Inicio rápido
+
+Hay dos recorridos:
+
+1. **Prueba local:** comprobar que el kit genera archivos, compila el plan y
+   ejecuta el ejemplo sin Azure. Es lo que cubre esta sección.
+2. **Proyecto de equipo:** revisar lo generado, sustituir el ejemplo por código
+   propio, probarlo y recién entonces subir un repositorio privado. La sección
+   «Del ejemplo a un repositorio de equipo» explica qué se edita.
 
 Así se ve la generación en local, sin Azure ni claves:
 
@@ -32,44 +61,17 @@ SOPS configuration omitted because no public recipients were supplied.
 No remote resources were changed.
 ```
 
-Hay dos recorridos distintos:
+### Requisitos
 
-1. **Prueba local:** comprobar que el kit genera archivos, compila el plan y
-   ejecuta el ejemplo sin Azure. Sigue la sección siguiente.
-2. **Proyecto de equipo:** revisar lo generado, sustituir el ejemplo por código
-   propio, probarlo y recién entonces subir un repositorio privado. La sección
-   «Del ejemplo a un repositorio de equipo» explica qué se edita.
+- Python 3.11 o posterior y Git.
+- Azure CLI con Bicep disponible localmente, para llegar hasta `plan` (solo compila infraestructura).
+- `pre-commit`, al instalar el hook en un repositorio Git.
 
-## Alcance del perfil
+### Demo en cinco pasos
 
-El único perfil validado usa Azure Functions Flex Consumption en `brazilsouth`,
-Python 3.12 y base de datos `none`. El kit **no** permite elegir cualquier
-servicio, base de datos o región. Entrega controles de credenciales, un runtime
-del generador dentro del proyecto, un ejemplo HTTP `/api/health` y pruebas
-básicas. SOPS solo se configura si proporcionas destinatarios públicos `age`;
-sin ellos se omite `.sops.yaml`.
-
-El workflow de escaneo sí se activa al subirlo a GitHub. Los workflows OIDC y
-de ciclo Azure son ejemplos **inactivos** en `examples/azure-workflows/`; contienen
-valores del ensayo y requieren adaptación antes de copiarlos a
-`.github/workflows/`. El kit no publica código de aplicación en Azure.
-
-## Requisitos de la prueba local
-
-En Windows, abre PowerShell en la **raíz de este repositorio**. Necesitas
-Python 3.11 o posterior y Git. Para llegar hasta `plan`, necesitas Azure CLI
-con Bicep disponible localmente: este paso solo compila infraestructura.
-`pre-commit` se necesita al instalar el hook en un repositorio Git.
-
-`doctor --mode local` comprueba Python y Git, pero **no** Azure CLI, Bicep o
-`pre-commit`. No instales ni actualices nada por esta prueba sin decidirlo
-antes.
-
-## Prueba segura en cinco pasos
-
-Copia el siguiente bloque en PowerShell desde la raíz del clon. Crea una carpeta
-temporal nueva en cada ejecución. No necesita claves, no publica un repositorio
-y no crea recursos Cloud.
+En Windows, abre PowerShell en la raíz de este repositorio y copia el siguiente
+bloque. Crea una carpeta temporal nueva en cada ejecución, no necesita claves,
+no publica un repositorio y no crea recursos Cloud.
 
 ```powershell
 $demoRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('feria-kit-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -84,8 +86,8 @@ python -m framework.starter_kit plan --config (Join-Path $projectDir 'feria-proj
 ```
 
 `doctor` comprueba lo básico; `init` guarda decisiones no secretas; `generate`
-crea el proyecto; `plan` compila Bicep **localmente**, sin `--what-if` ni acceso
-a Azure Resource Manager. Después, en la **misma sesión**, entra al proyecto:
+crea el proyecto; `plan` compila Bicep localmente, sin `--what-if` ni acceso a
+Azure Resource Manager. Después, en la misma sesión, entra al proyecto:
 
 ```powershell
 Set-Location $projectDir
@@ -97,17 +99,24 @@ Get-Content .\README.md
 `Test-Path` debe mostrar `True`. Si abriste otra terminal y `$projectDir` ya no
 existe, entra manualmente en la carpeta `proyecto` generada y ejecuta solo los
 tres comandos relativos de las últimas líneas. Allí hay un `README.md` propio
-que explica qué editar. En esta prueba no debería existir `.sops.yaml`.
+que explica qué editar. En esta prueba no debería existir `.sops.yaml`: SOPS
+solo se configura si proporcionas destinatarios públicos `age`.
 
-No edites la carpeta temporal para concluir la prueba. Si deseas repetir
-`generate`, hazlo antes de tocar archivos; el manifiesto debe permanecer igual.
-Una vez que el equipo modifica un archivo generado, el kit rechaza la
-sobrescritura para proteger su trabajo. Genera otra propuesta en otra carpeta
-y revisa diferencias en lugar de borrar cambios.
+No edites la carpeta temporal para concluir la prueba. Si quieres
+repetir `generate`, hazlo antes de tocar archivos; el manifiesto debe permanecer
+igual. Una vez que el equipo modifica un archivo generado, el kit rechaza la
+sobrescritura para proteger su trabajo: genera otra propuesta en otra carpeta y
+revisa diferencias en lugar de borrar cambios.
+
+### Si algo falla
+
+- `doctor` dice «Ready» pero `plan` falla: comprueba `az bicep version`.
+- `init` indica fecha pendiente: usa un `expires_on` futuro.
+- Otro archivo ya existe y difiere: el generador se detiene sin sobrescribirlo.
 
 ## Del ejemplo a un repositorio de equipo
 
-La guía detallada está en el `README.md` **del proyecto generado**. Esta tabla
+La guía detallada está en el `README.md` del proyecto generado. Esta tabla
 resume las responsabilidades:
 
 | Ruta | Acción del equipo |
@@ -128,32 +137,21 @@ README generado contiene la secuencia exacta para preparar Git, instalar el
 hook, revisar los archivos staged, crear un repositorio privado vacío y hacer
 el primer push. Al subirlo, hay que comprobar que el escaneo CI se ejecuta y,
 si los permisos del repositorio lo permiten, exigirlo antes del merge. La
-carpeta temporal de esta demostración no debe subirse sin esa revisión.
+carpeta temporal de la demo no debe subirse sin esa revisión.
 
 Para una **aplicación existente o un stack distinto**, genera primero en una
 carpeta separada. Integra solo los controles compatibles sobre una rama de
 trabajo; no copies el código a `framework/` ni reemplaces la estructura de la
-aplicación. El generador detecta colisiones de contenido, pero no puede decidir
-la arquitectura de cualquier equipo. PyroPrev requirió una adaptación
-controlada, no un solo comando.
+aplicación. El generador detecta colisiones de contenido.
 
-Subir el repositorio y comenzar a programar **no equivale a desplegar**.
-El plan Bicep describe recursos, pero todavía falta integrar y probar la
-publicación del código. Para esa etapa consulta [OIDC](docs/OIDC.md) y el
+Para llegar a Azure, consulta [OIDC](docs/OIDC.md) y el
 [ciclo Azure](docs/AZURE_LIFECYCLE.md), verifica tu propia suscripción,
-permisos y cuotas, y revisa `what-if` antes de solicitar `apply`. **No
-ejecutes `apply` o `destroy` por haber completado la prueba local.**
+permisos y cuotas, y revisa `what-if` antes de solicitar `apply`.
 
 SOPS es opcional cuando no necesitas versionar configuración sensible. La
 [guía SOPS](docs/SOPS.md) explica destinatarios públicos, respaldo y
-recuperación. Nunca coloques una clave privada, token real o `.env` histórico
-en el kit o en Git. `local.settings.json` queda excluido y bloqueado por el
-control local. La [guía de escaneo](docs/CI_SECRET_SCANNING.md) explica el gate.
-
-Si `doctor` dice «Ready» pero `plan` falla, comprueba `az bicep version`:
-`doctor --mode local` no exige Azure CLI/Bicep. Si `init` indica fecha pendiente,
-usa un `expires_on` futuro. Si otro archivo ya existe y difiere, el generador
-se detiene sin sobrescribirlo.
+recuperación. `local.settings.json` queda excluido y bloqueado por el control
+local. La [guía de escaneo](docs/CI_SECRET_SCANNING.md) explica el gate.
 
 ## Decisiones técnicas
 
@@ -178,11 +176,28 @@ En CI, las acciones y los binarios descargados van fijados por commit y SHA-256
 sobrescribir archivos que el equipo ya modificó. Cada decisión con su contexto y
 su criterio de reversión está en [`docs/adr/`](docs/adr).
 
-## Investigación y evidencia
+## Origen
 
-Este kit surge de un Trabajo de Título sobre prevención de fugas de credenciales
-en proyectos académicos con GitHub y Azure. La evidencia experimental completa
-no se incluye aquí; las decisiones técnicas están en [`docs/adr/`](docs/adr). La generación automatizada, la prueba
-manual del autor y este ejemplo no prueban por sí solos facilidad de adopción
-para todos los equipos ni funcionamiento Cloud del nuevo esqueleto. Consulta
-[SECURITY.md](SECURITY.md) antes de usarlo.
+El kit nació de mi Trabajo de Título sobre prevención de fugas de credenciales
+en proyectos académicos con GitHub y Azure, aprobado con nota máxima. El caso
+de estudio fue PyroPrev, un proyecto de otro equipo; el kit genera un esqueleto
+nuevo y no incluye su código. Los nombres `feria-*` y `.feria/` vienen de ese
+contexto (la Feria de Software de la universidad) y se mantienen por
+compatibilidad.
+
+## Limitaciones
+
+- El único perfil validado es Azure Functions Flex Consumption en `brazilsouth`, Python 3.12 y base de datos `none`; no se puede elegir cualquier servicio, base de datos o región.
+- Los workflows OIDC y de ciclo Azure son ejemplos inactivos en `examples/azure-workflows/`; contienen valores del ensayo y requieren adaptación antes de copiarlos a `.github/workflows/`.
+- El kit no publica código de aplicación en Azure ni es una aplicación ya publicada; subir el repositorio y programar no equivale a desplegar, porque falta integrar y probar la publicación del código.
+- `doctor --mode local` comprueba Python y Git, pero no Azure CLI, Bicep ni `pre-commit`; la prueba no requiere instalar ni actualizar nada sin decidirlo antes.
+- Completar la prueba local no es motivo para ejecutar `apply` o `destroy`; ambos requieren revisar antes `what-if`, la suscripción, los permisos y las cuotas.
+- Las claves privadas, tokens reales y archivos `.env` históricos no deben entrar al kit ni a Git.
+- El generador no puede decidir la arquitectura de cualquier equipo; PyroPrev requirió una adaptación controlada, no un solo comando.
+- La evidencia experimental completa del Trabajo de Título no se incluye en este repositorio.
+- La generación automatizada, la prueba manual del autor y este ejemplo no prueban por sí solos facilidad de adopción para todos los equipos ni funcionamiento Cloud del nuevo esqueleto.
+
+## Más información
+
+- [SECURITY.md](SECURITY.md): política de seguridad; consúltala antes de usar el kit.
+- [`docs/`](docs): arquitectura, alcance, OIDC, ciclo Azure, SOPS, escaneo en CI, modelo de amenazas y ADRs.
